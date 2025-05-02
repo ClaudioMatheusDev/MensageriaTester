@@ -1,52 +1,136 @@
-version: '3.8'
-
 services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver
+    environment:
+      - SA_PASSWORD=91398608Ma*
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -U sa -P 91398608Ma* -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app-network
+    restart: unless-stopped
+
   rabbitmq:
     image: rabbitmq:3-management
+    container_name: rabbitmq
     ports:
-      - "5672:5672"  # Porta do RabbitMQ
-      - "15672:15672"  # Porta do Management UI (http://localhost:15672)
+      - "5672:5672"
+      - "15672:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=admin
       - RABBITMQ_DEFAULT_PASS=password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
 
   produto-service:
     build:
-      context: ./ProdutoService
+      context: ./src/ProdutoService
       dockerfile: Dockerfile
+    container_name: produto-service
     ports:
       - "5001:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=ProdutoDB;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=true;
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=password
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
 
   carrinho-service:
     build:
-      context: ./CarrinhoService
+      context: ./src/CarrinhoService
       dockerfile: Dockerfile
+    container_name: carrinho-service
     ports:
       - "5002:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=CarrinhoDB;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=true;
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=password
     depends_on:
-      - rabbitmq
-      - produto-service
+      rabbitmq:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+      produto-service:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
 
   pedido-service:
     build:
-      context: ./PedidoService
+      context: ./src/PedidoService
       dockerfile: Dockerfile
+    container_name: pedido-service
     ports:
       - "5003:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=PedidoDB;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=true;
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=password
     depends_on:
-      - rabbitmq
-      - produto-service
-      - carrinho-service
+      rabbitmq:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+      produto-service:
+        condition: service_started
+      carrinho-service:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
 
   api-gateway:
     build:
-      context: ./ApiGateway
+      context: ./src/ApiGateway
       dockerfile: Dockerfile
+    container_name: api-gateway
     ports:
       - "5000:80"
     depends_on:
-      - produto-service
-      - carrinho-service
-      - pedido-service
+      produto-service:
+        condition: service_started
+      carrinho-service:
+        condition: service_started
+      pedido-service:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  sqlserver_data:
+
+networks:
+  app-network:
+    driver: bridge

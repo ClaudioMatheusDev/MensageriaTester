@@ -1,22 +1,19 @@
+using MassTransit;
+using Microsoft.EntityFrameworkCore;
+using CarrinhoService.Data;
+using CarrinhoService.Models;
+using CarrinhoService.Consumers;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Configuração do SQL Server
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-var app = builder.Build();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
-app.UseHttpsRedirection();
-
+// Configuração do RabbitMQ com MassTransit
 builder.Services.AddMassTransit(x =>
 {
-    x.AddConsumer<ProdutoAdicionadoConsumer>();
+    x.AddConsumer<ProdutoAtualizadoConsumer>(); // Registrar Consumer
 
     x.UsingRabbitMq((context, cfg) =>
     {
@@ -26,12 +23,37 @@ builder.Services.AddMassTransit(x =>
             h.Password("password");
         });
 
-        cfg.ReceiveEndpoint("produto-adicionado-queue", e =>
+        // Configurar fila para o Consumer
+        cfg.ReceiveEndpoint("produto-atualizado-queue", e =>
         {
-            e.ConfigureConsumer<ProdutoAdicionadoConsumer>(context);
+            e.ConfigureConsumer<ProdutoAtualizadoConsumer>(context);
         });
     });
 });
 
-app.Run();
+// Repositório
+builder.Services.AddScoped<ICarrinhoRepository, CarrinhoRepository>();
 
+// Swagger
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// Migração automática
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.MapControllers();
+
+app.Run();
